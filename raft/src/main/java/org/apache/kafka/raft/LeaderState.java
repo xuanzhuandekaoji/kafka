@@ -48,7 +48,7 @@ public class LeaderState<T> implements EpochState {
     private final int epoch;
     private final long epochStartOffset;
 
-    private Optional<LogOffsetMetadata> highWatermark;
+    private Optional<LogOffsetMetadata> highWatermark = Optional.empty();
     private final Map<Integer, ReplicaState> voterStates = new HashMap<>();
     private final Map<Integer, ReplicaState> observerStates = new HashMap<>();
     private final Set<Integer> grantingVoters = new HashSet<>();
@@ -70,7 +70,6 @@ public class LeaderState<T> implements EpochState {
         this.localId = localId;
         this.epoch = epoch;
         this.epochStartOffset = epochStartOffset;
-        this.highWatermark = Optional.empty();
 
         for (int voterId : voters) {
             boolean hasAcknowledgedLeader = voterId == localId;
@@ -170,8 +169,10 @@ public class LeaderState<T> implements EpochState {
                     if (highWatermarkUpdateOffset > currentHighWatermarkMetadata.offset
                         || (highWatermarkUpdateOffset == currentHighWatermarkMetadata.offset &&
                             !highWatermarkUpdateMetadata.metadata.equals(currentHighWatermarkMetadata.metadata))) {
+                        Optional<LogOffsetMetadata> oldHighWatermark = highWatermark;
                         highWatermark = highWatermarkUpdateOpt;
                         logHighWatermarkUpdate(
+                            oldHighWatermark,
                             highWatermarkUpdateMetadata,
                             indexOfHw,
                             followersByDescendingFetchOffset
@@ -187,8 +188,10 @@ public class LeaderState<T> implements EpochState {
                         return false;
                     }
                 } else {
+                    Optional<LogOffsetMetadata> oldHighWatermark = highWatermark;
                     highWatermark = highWatermarkUpdateOpt;
                     logHighWatermarkUpdate(
+                        oldHighWatermark,
                         highWatermarkUpdateMetadata,
                         indexOfHw,
                         followersByDescendingFetchOffset
@@ -201,16 +204,28 @@ public class LeaderState<T> implements EpochState {
     }
 
     private void logHighWatermarkUpdate(
+        Optional<LogOffsetMetadata> oldHighWatermark,
         LogOffsetMetadata newHighWatermark,
         int indexOfHw,
         List<ReplicaState> followersByDescendingFetchOffset
     ) {
-        log.trace(
-            "High watermark set to {} based on indexOfHw {} and voters {}",
-            newHighWatermark,
-            indexOfHw,
-            followersByDescendingFetchOffset
-        );
+        if (oldHighWatermark.isPresent()) {
+            log.trace(
+                "High watermark set to {} from {} based on indexOfHw {} and voters {}",
+                newHighWatermark,
+                oldHighWatermark.get(),
+                indexOfHw,
+                followersByDescendingFetchOffset
+            );
+        } else {
+            log.info(
+                "High watermark set to {} for the first time for epoch {} based on indexOfHw {} and voters {}",
+                newHighWatermark,
+                epoch,
+                indexOfHw,
+                followersByDescendingFetchOffset
+            );
+        }
     }
 
     /**
@@ -320,7 +335,7 @@ public class LeaderState<T> implements EpochState {
             .setErrorCode(Errors.NONE.code())
             .setLeaderId(localId)
             .setLeaderEpoch(epoch)
-            .setHighWatermark(highWatermark().map(offsetMetadata -> offsetMetadata.offset).orElse(-1L))
+            .setHighWatermark(highWatermark.map(offsetMetadata -> offsetMetadata.offset).orElse(-1L))
             .setCurrentVoters(describeReplicaStates(voterStates, currentTimeMs))
             .setObservers(describeReplicaStates(observerStates, currentTimeMs));
     }

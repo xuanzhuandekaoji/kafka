@@ -159,7 +159,8 @@ public class RecordCollectorImpl implements RecordCollector {
                     final Set<Integer> multicastPartitions = maybeMulticastPartitions.get();
                     if (multicastPartitions.isEmpty()) {
                         // If a record is not to be sent to any partition, mark it as a dropped record.
-                        log.debug("Not sending the record with key {} , value {} to any partition", key, value);
+                        log.warn("Skipping record as partitioner returned empty partitions. "
+                                + "topic=[{}]", topic);
                         droppedRecordsSensor.record();
                     } else {
                         for (final int multicastPartition: multicastPartitions) {
@@ -227,7 +228,6 @@ public class RecordCollectorImpl implements RecordCollector {
 
             if (exception == null) {
                 final TopicPartition tp = new TopicPartition(metadata.topic(), metadata.partition());
-                log.info("Produced key:{}, value:{} successfully to tp:{}", key, value, tp);
                 if (metadata.offset() >= 0L) {
                     offsets.put(tp, metadata.offset());
                 } else {
@@ -331,7 +331,7 @@ public class RecordCollectorImpl implements RecordCollector {
         // transaction during handleRevocation and thus there is no transaction in flight, or else none of the revoked
         // tasks had any data in the current transaction and therefore there is no need to commit or abort it.
 
-        checkForException();
+        close();
     }
 
     /**
@@ -347,6 +347,11 @@ public class RecordCollectorImpl implements RecordCollector {
             streamsProducer.abortTransaction();
         }
 
+        close();
+    }
+
+    private void close() {
+        offsets.clear();
         checkForException();
     }
 

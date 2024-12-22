@@ -54,6 +54,19 @@ import org.apache.kafka.common.utils.Sanitizer
 import scala.collection.{Map, mutable, _}
 import scala.jdk.CollectionConverters._
 
+object ZkAdminManager {
+  def clientQuotaPropsToDoubleMap(props: Map[String, String]): Map[String, Double] = {
+    props.map { case (key, value) =>
+      val doubleValue = try value.toDouble catch {
+        case _: NumberFormatException =>
+          throw new IllegalStateException(s"Unexpected client quota configuration value: $key -> $value")
+      }
+      key -> doubleValue
+    }
+  }
+}
+
+
 class ZkAdminManager(val config: KafkaConfig,
                      val metrics: Metrics,
                      val metadataCache: MetadataCache,
@@ -636,16 +649,6 @@ class ZkAdminManager(val config: KafkaConfig,
 
   private def sanitized(name: Option[String]): String = name.map(n => sanitizeEntityName(n)).getOrElse("")
 
-  private def fromProps(props: Map[String, String]): Map[String, Double] = {
-    props.map { case (key, value) =>
-      val doubleValue = try value.toDouble catch {
-        case _: NumberFormatException =>
-          throw new IllegalStateException(s"Unexpected client quota configuration value: $key -> $value")
-      }
-      key -> doubleValue
-    }
-  }
-
   def handleDescribeClientQuotas(userComponent: Option[ClientQuotaFilterComponent],
     clientIdComponent: Option[ClientQuotaFilterComponent], strict: Boolean): Map[ClientQuotaEntity, Map[String, Double]] = {
 
@@ -706,7 +709,7 @@ class ZkAdminManager(val config: KafkaConfig,
     (userEntries ++ clientIdEntries ++ bothEntries).flatMap { case ((u, c), p) =>
       val quotaProps = p.asScala.filter { case (key, _) => QuotaConfigs.isClientOrUserQuotaConfig(key) }
       if (quotaProps.nonEmpty && matches(userComponent, u) && matches(clientIdComponent, c))
-        Some(userClientIdToEntity(u, c) -> fromProps(quotaProps))
+        Some(userClientIdToEntity(u, c) -> ZkAdminManager.clientQuotaPropsToDoubleMap(quotaProps))
       else
         None
     }.toMap
@@ -732,7 +735,7 @@ class ZkAdminManager(val config: KafkaConfig,
     ipEntries.flatMap { case (ip, props) =>
       val ipQuotaProps = props.asScala.filter { case (key, _) => DynamicConfig.Ip.names.contains(key) }
       if (ipQuotaProps.nonEmpty)
-        Some(ipToQuotaEntity(ip) -> fromProps(ipQuotaProps))
+        Some(ipToQuotaEntity(ip) -> ZkAdminManager.clientQuotaPropsToDoubleMap(ipQuotaProps))
       else
         None
     }
@@ -846,7 +849,7 @@ class ZkAdminManager(val config: KafkaConfig,
     try {
       if (describingAllUsers)
         adminZkClient.fetchAllEntityConfigs(ConfigType.User).foreach {
-          case (user, properties) => addToResultsIfHasScramCredential(user, properties) }
+          case (user, properties) => addToResultsIfHasScramCredential(Sanitizer.desanitize(user), properties) }
       else {
         // describing specific users
         val illegalUsers = users.get.filter(_.isEmpty).toSet

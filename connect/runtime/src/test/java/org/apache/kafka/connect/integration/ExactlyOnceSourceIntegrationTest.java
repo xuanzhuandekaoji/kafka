@@ -159,7 +159,7 @@ public class ExactlyOnceSourceIntegrationTest {
     }
 
     /**
-     * A simple test for the pre-flight validation API for connectors to provide their own delivery guarantees.
+     * A simple test for the pre-flight validation API for connectors to provide their own guarantees for exactly-once semantics.
      */
     @Test
     public void testPreflightValidation() {
@@ -388,9 +388,12 @@ public class ExactlyOnceSourceIntegrationTest {
         props.put(CUSTOM_TRANSACTION_BOUNDARIES_CONFIG, MonitorableSourceConnector.TRANSACTION_BOUNDARIES_SUPPORTED);
         props.put(MESSAGES_PER_POLL_CONFIG, Integer.toString(recordsProduced));
 
-        // expect all records to be consumed and committed by the connector
-        connectorHandle.expectedRecords(recordsProduced);
-        connectorHandle.expectedCommits(recordsProduced);
+        // the connector aborts some transactions, which causes records that it has emitted (and for which
+        // SourceTask::commitRecord has been invoked) to be invisible to consumers; we expect the task to
+        // emit at most 233 records in total before 100 records have been emitted as part of one or more
+        // committed transactions
+        connectorHandle.expectedRecords(233);
+        connectorHandle.expectedCommits(233);
 
         // start a source connector
         connect.configureConnector(CONNECTOR_NAME, props);
@@ -407,10 +410,10 @@ public class ExactlyOnceSourceIntegrationTest {
         consumerProps.put(ConsumerConfig.ISOLATION_LEVEL_CONFIG, "read_committed");
         // consume all records from the source topic or fail, to ensure that they were correctly produced
         ConsumerRecords<byte[], byte[]> sourceRecords = connect.kafka().consumeAll(
-                CONSUME_RECORDS_TIMEOUT_MS,
-                Collections.singletonMap(ConsumerConfig.ISOLATION_LEVEL_CONFIG, "read_committed"),
-                null,
-                topic
+            CONSUME_RECORDS_TIMEOUT_MS,
+            Collections.singletonMap(ConsumerConfig.ISOLATION_LEVEL_CONFIG, "read_committed"),
+            null,
+            topic
         );
         assertTrue("Not enough records produced by source connector. Expected at least: " + recordsProduced + " + but got " + sourceRecords.count(),
                 sourceRecords.count() >= recordsProduced);
@@ -727,8 +730,8 @@ public class ExactlyOnceSourceIntegrationTest {
      * Then, a "soft downgrade" is simulated: the Connect cluster is shut down and reconfigured to disable
      * exactly-once support. The cluster is brought up again, the connector is allowed to produce some data,
      * the connector is shut down, and this time, the records the connector has produced are inspected for
-     * accuracy. Because of the downgrade, exactly-once guarantees are lost, but we check to make sure that
-     * the task has maintained exactly-once delivery <i>up to the last-committed record</i>.
+     * accuracy. Because of the downgrade, exactly-once semantics are lost, but we check to make sure that
+     * the task has maintained exactly-once semantics <i>up to the last-committed record</i>.
      */
     @Test
     public void testSeparateOffsetsTopic() throws Exception {
@@ -858,7 +861,7 @@ public class ExactlyOnceSourceIntegrationTest {
             );
             assertTrue("Not enough records produced by source connector. Expected at least: " + recordsProduced + " + but got " + sourceRecords.count(),
                     sourceRecords.count() >= recordsProduced);
-            // also have to check which offsets have actually been committed, since we no longer have exactly-once guarantees
+            // also have to check which offsets have actually been committed, since we no longer have exactly-once semantics
             offsetRecords = connectorTargetedCluster.consumeAll(
                     CONSUME_RECORDS_TIMEOUT_MS,
                     Collections.singletonMap(ConsumerConfig.ISOLATION_LEVEL_CONFIG, "read_committed"),
